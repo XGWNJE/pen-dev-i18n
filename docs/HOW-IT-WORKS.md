@@ -82,7 +82,7 @@ Menu.getApplicationMenu().items.forEach(i => { if (DICT[i.label]) i.label = DICT
 | 平台 | 启动方式 | 退出方式 | 菜单注入 |
 |---|---|---|---|
 | macOS | `open -a X.app --args …` | `osascript -e 'quit app "X"'` | ✅ 支持 |
-| Windows | 直接 spawn `X.exe` | `taskkill` | 未验证（`process.mainModule.require` 通道应可用） |
+| Windows | 直接 spawn `X.exe`，按安装位置生成预设 | `CloseMainWindow()`，保留未保存文件确认框 | 已在 Pen 桌面版实测 |
 | Linux | 直接 spawn 可执行文件 | `SIGTERM` | 未验证 |
 
 `--inspect` 的可用性依赖目标 App 没有禁用 Node inspector；若不可用，脚本会降级为「只汉化界面文案，不动菜单栏」，其它功能不受影响。

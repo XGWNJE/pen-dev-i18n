@@ -3,13 +3,25 @@
 > **Pen 没有中文界面？我们把它汉化好了 —— 装上就有。界面、原生菜单栏、输入框提示、报错全部中文，也可以一键切成日本語 / 한국어 / Español 等 12 种语言。**
 
 [![languages](https://img.shields.io/badge/languages-12-blue)](#支持的语言)
-[![platform](https://img.shields.io/badge/platform-macOS-lightgrey)](#安装)
+[![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-lightgrey)](#安装)
 [![no-patch](https://img.shields.io/badge/%E4%B8%8D%E6%94%B9%E5%AE%89%E8%A3%85%E5%8C%85-%E5%8F%AF%E4%B8%80%E9%94%AE%E6%92%A4%E9%94%80-success)](#%E4%BC%9A%E4%B8%8D%E4%BC%9A%E6%94%B9%E6%88%91%E7%9A%84-pen)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ![Pen 中文界面](docs/images/lang-zh-CN.jpg)
 
 ## 安装
+
+**Windows（本 fork 新增）**：需要 [Node.js 20+](https://nodejs.org) 和官方 Pen 桌面版。PowerShell 中运行：
+
+```powershell
+git clone https://github.com/XGWNJE/pen-dev-i18n.git
+cd pen-dev-i18n
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+安装器会在 `%USERPROFILE%\Pen汉化\` 生成配置、12 个语言词典和 `启动汉化.bat`。先保存设计并退出已运行的 Pen，再双击该启动器。它默认查找用户目录或 Program Files 下的 `Pen.exe`；自定义安装位置可向安装器传入 `-AppPath 'C:\...\Pen.exe'`。
+
+运行时会打开仅监听本机的调试端口；同机其他进程仍可连接。用完后**完全退出 Pen**，调试端口才会关闭。要恢复原版，退出 Pen 后从官方快捷方式启动，或在安装目录执行 `node <本仓库路径>\bin\zh-patch.mjs stop --restart`。Windows 上已用 Pen 1.2.14.0 实测启动、界面注入、菜单汉化和恢复原版；仪表盘可见文案覆盖率为 96.2%，其他页面及后续版本需另行验收。
 
 **macOS**，需要先装 [Node.js 20+](https://nodejs.org)（`node -v` 能打印版本即可）。
 
@@ -45,7 +57,7 @@ node <上面的仓库路径>/bin/zh-patch.mjs start            # 启动并汉化
 | ![es](docs/images/lang-es.jpg) | ![zh-TW](docs/images/lang-zh-TW.jpg) |
 
 - **界面文案**：主页、模板卡、编辑器工具栏、属性面板、智能体面板、模型选择器、错误提示 —— 全中文
-- **macOS 菜单栏**：`文件 / 编辑 / 视图 / 窗口 / 帮助`，连「退出 Pen」「隐藏其他」「全选」这些系统项也一起汉化
+- **原生菜单栏**：`文件 / 编辑 / 视图 / 窗口 / 帮助`；Windows 已实测菜单汉化，仍可能有未覆盖项目
 - **输入框与悬停提示**：包括编辑器里那类用 CSS 画的占位符
 - **动态文案**：`Thought for 44s` → `思考了 44s`，`Edited 8分钟前` → `编辑于 8分钟前`
 

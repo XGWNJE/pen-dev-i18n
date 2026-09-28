@@ -7,6 +7,30 @@ import { sleep, waitFor } from './util.mjs'
 export const IS_MAC = process.platform === 'darwin'
 export const IS_WIN = process.platform === 'win32'
 
+function runPowerShell(script, env = {}) {
+  const encoded = Buffer.from(`$ProgressPreference = 'SilentlyContinue'; ${script}`, 'utf16le').toString('base64')
+  return execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
+    encoding: 'utf8', env: { ...process.env, ...env },
+  })
+}
+
+/** Resolve the bundled Pen preset without storing a machine-specific path in Git. */
+export function resolvePresetApp(preset, platform = process.platform, env = process.env) {
+  if (platform !== 'win32') return preset.app
+  if (env.PEN_APP_PATH && !fs.existsSync(env.PEN_APP_PATH)) {
+    throw new Error(`PEN_APP_PATH 指向的文件不存在：${env.PEN_APP_PATH}`)
+  }
+  const candidates = [
+    env.PEN_APP_PATH,
+    env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, 'Programs', 'Pen', 'Pen.exe'),
+    env.ProgramFiles && path.join(env.ProgramFiles, 'Pen', 'Pen.exe'),
+    env['ProgramFiles(x86)'] && path.join(env['ProgramFiles(x86)'], 'Pen', 'Pen.exe'),
+  ].filter(Boolean)
+  const appPath = candidates.find(p => fs.existsSync(p))
+  if (!appPath) throw new Error('找不到 Pen.exe；请设置 PEN_APP_PATH 为 Pen.exe 的完整路径后重试')
+  return { ...preset.app, path: appPath, processPattern: appPath }
+}
+
 export function appName(config) {
   return config.app.name || path.basename(config.app.path).replace(/\.app$/, '')
 }
@@ -18,13 +42,14 @@ export function processPattern(config) {
   return path.basename(p)
 }
 
-/** 列出匹配进程的 pid（macOS/Linux 用 pgrep，Windows 用 tasklist） */
+/** List only processes running the configured executable, not other apps named Pen.exe. */
 export function findPids(config) {
   const pattern = processPattern(config)
   try {
     if (IS_WIN) {
-      const out = execFileSync('tasklist', ['/FI', `IMAGENAME eq ${path.basename(pattern)}`, '/FO', 'CSV', '/NH'], { encoding: 'utf8' })
-      return out.split('\n').map(l => Number((l.match(/^"[^"]+","(\d+)"/) || [])[1])).filter(Boolean)
+      const script = '$target = [System.IO.Path]::GetFullPath($env:ZH_PATCH_EXE); Get-Process -Name $env:ZH_PATCH_NAME -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $target } | ForEach-Object { $_.Id }'
+      const out = runPowerShell(script, { ZH_PATCH_EXE: path.resolve(config.app.path), ZH_PATCH_NAME: path.parse(pattern).name })
+      return out.split(/\r?\n/).map(s => Number(s.trim())).filter(Boolean)
     }
     const out = execFileSync('pgrep', ['-f', pattern], { encoding: 'utf8' })
     return out.split('\n').map(s => Number(s.trim())).filter(Boolean)
@@ -47,11 +72,10 @@ export function mainExecutable(appPath) {
 }
 
 /** 以调试端口启动（macOS 用 open，保留正常窗口/权限行为） */
-export function launch(config, { wait = true, timeout = 30000 } = {}) {
-  const args = [`--remote-debugging-port=${config.debug.pagePort}`]
-  if (config.debug.inspectPort) args.push(`--inspect=${config.debug.inspectPort}`)
-  const extra = config.app.launchArgs || []
-  const all = [...args, ...extra]
+export function launch(config, { wait = true, timeout = 30000, debug = true } = {}) {
+  const args = debug ? [`--remote-debugging-address=127.0.0.1`, `--remote-debugging-port=${config.debug.pagePort}`] : []
+  if (debug && config.debug.inspectPort) args.push(`--inspect=127.0.0.1:${config.debug.inspectPort}`)
+  const all = [...args, ...(config.app.launchArgs || [])]
 
   if (IS_MAC && config.app.path.endsWith('.app')) {
     const child = spawn('open', ['-a', config.app.path, '--args', ...all], { detached: true, stdio: 'ignore' })
@@ -62,7 +86,7 @@ export function launch(config, { wait = true, timeout = 30000 } = {}) {
     const child = spawn(exe, all, { detached: true, stdio: 'ignore' })
     child.unref()
   }
-  if (!wait) return Promise.resolve(true)
+  if (!wait || !debug) return Promise.resolve(true)
   return waitFor(() => portAlive(config.debug.pagePort), { timeout })
 }
 
@@ -70,6 +94,9 @@ export async function quit(config) {
   if (IS_MAC && config.app.path.endsWith('.app')) {
     const name = appName(config)
     try { execFileSync('osascript', ['-e', `quit app "${name}"`], { stdio: 'ignore' }) } catch {}
+  } else if (IS_WIN) {
+    const script = '$target = [System.IO.Path]::GetFullPath($env:ZH_PATCH_EXE); Get-Process -Name $env:ZH_PATCH_NAME -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $target -and $_.MainWindowHandle -ne 0 } | ForEach-Object { [void]$_.CloseMainWindow() }'
+    runPowerShell(script, { ZH_PATCH_EXE: path.resolve(config.app.path), ZH_PATCH_NAME: path.parse(processPattern(config)).name })
   } else {
     for (const pid of findPids(config)) { try { process.kill(pid, 'SIGTERM') } catch {} }
   }

@@ -94,7 +94,7 @@ $N verify --lang <code> --json --min 90
 
 | 现象 | 原因 | 处置 |
 |---|---|---|
-| `start` 退出码 3 | App 已运行但没开调试端口 | 先退出 App（macOS `osascript -e 'quit app "X"'`），再 `start --restart` |
+| `start` 退出码 3 | App 已运行但没开调试端口 | 先保存文件并正常退出 App，再 `start`；也可用 `start --restart` 请求正常关闭 |
 | `apply`/`todo` 退出码 4 | 端口不可用 | 用 `start` 启动，而不是直接开 App |
 | `todo` 里出现大段英文长句 | 真的没翻译 | 加进词典 |
 | 同一条反复出现在 `todo` | 该文案由代码拼接（DOM 被拆成多个节点） | 把 **片段** 也加进词典（引擎支持前缀软匹配） |
@@ -113,6 +113,6 @@ $N verify --lang <code> --json --min 90
 ## 6. 给维护者的建议改动路径
 
 1. 新 App 词典：`dict/<app>.zh.json` + `presets/<app>.json`。
-2. 新平台差异（Windows/Linux 启动方式）：改 `src/app.mjs`。
+2. 新平台差异（Windows/Linux 启动方式）：改 `src/app.mjs`，并检查 `install.ps1` / `install.sh`。
 3. 新注入能力（例如 SVG 文本、Shadow DOM）：改 `src/engine-runtime.js` 并同步 `docs/HOW-IT-WORKS.md`。
 4. 改完请跑：`npm test`（CLI 冒烟）+ 在目标 App 上 `apply → todo → verify` 走一遍。

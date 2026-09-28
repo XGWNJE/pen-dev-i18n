@@ -50,7 +50,7 @@ function usage() {
     log(`  ${name.padEnd(18)} ${c.usage.replace(name, '').trim().padEnd(width)}  ${C.dim}${c.desc}${C.reset}`)
   }
   log(`\n典型流程：`)
-  log(`  zh-patch init --app "/Applications/Pen.app"   # 生成配置（或 zh-patch preset use pen）`)
+  log(`  zh-patch preset use pen                      # 生成当前系统的 Pen 配置与词典`)
   log(`  zh-patch start                                # 带汉化启动`)
   log(`  zh-patch todo --json                          # 取未翻译清单`)
   log(`  zh-patch verify --min 90                      # 覆盖率验收`)

@@ -10,7 +10,7 @@ import {
   findConfigPath, loadConfig, loadDict, saveDict, writeConfigTemplate, resolvePreset,
 } from './config.mjs'
 import { patchMenu, auditPage, extractStrings, injectTargets, watch, engineVersion } from './injector.mjs'
-import { detectApp, findPids, hasDebugPort, isRunning, launch, quit, forceKill } from './app.mjs'
+import { detectApp, findPids, isRunning, launch, quit, resolvePresetApp } from './app.mjs'
 import { listTargets, portAlive } from './cdp.mjs'
 
 
@@ -34,7 +34,7 @@ function cfg(opts = {}, { allowMissing = false } = {}) {
 
 export async function cmdInit(args, opts) {
   const appPath = args[0] || opts.app
-  if (!appPath) { fail('用法：zh-patch init --app "/Applications/YourApp.app"'); process.exit(2) }
+  if (!appPath) { fail('用法：zh-patch init --app <应用可执行文件路径>'); process.exit(2) }
   const det = detectApp(appPath)
   if (det.electron === false) warn('没在 App 里找到 app.asar / resources/app —— 它可能不是 Electron 应用，汉化注入会无效。')
 
@@ -72,7 +72,7 @@ export async function cmdDoctor(args, opts) {
   const push = (name, okFlag, detail) => checks.push({ name, ok: !!okFlag, detail })
 
   push('node', Number(process.versions.node.split('.')[0]) >= 20, `v${process.versions.node}`)
-  const cfgFound = findConfigPath(process.cwd())
+  const cfgFound = opts.config ? path.resolve(opts.config) : findConfigPath(opts.dir || process.cwd())
   push('config', !!cfgFound, cfgFound || `未找到 ${CONFIG_NAME}`)
 
   if (cfgFound) {
@@ -89,7 +89,7 @@ export async function cmdDoctor(args, opts) {
     const inspectUp = await portAlive(config.debug.inspectPort)
     push('页面调试端口', pageUp || !running, `${config.debug.pagePort} ${pageUp ? '可连' : '未监听'}`)
     push('主进程 inspector', inspectUp || !running, `${config.debug.inspectPort} ${inspectUp ? '可连' : '未监听'}`)
-    if (running && !pageUp) push('结论', false, 'App 不是由 zh-patch 启动的：先 Cmd+Q 退出，再 zh-patch start')
+    if (running && !pageUp) push('结论', false, 'App 不是由 zh-patch 启动的：先正常退出 App，再 zh-patch start')
     else if (running && pageUp) push('结论', true, '可以直接注入')
   }
 
@@ -112,17 +112,33 @@ export async function cmdStart(args, opts) {
 
   let launched = false
   if (isRunning(config) && !(await portAlive(config.debug.pagePort))) {
-    fail('App 正在运行但没有开启调试端口。先 Cmd+Q 退出 App，再运行 zh-patch start（或加 --restart）。')
-    if (opts.restart) { await quit(config); await sleep(1200); }
-    else process.exit(3)
+    if (opts.restart) {
+      if (!opts.json) info('App 正在运行，正在请求正常退出以便重新启动…')
+      if (!(await quit(config))) { fail('App 未退出；可能有未保存文件或确认对话框。请手动处理后重试。'); process.exit(3) }
+      await sleep(1200)
+    }
+    else {
+      fail('App 正在运行但没有开启调试端口。先保存文件并正常退出 App，再运行 zh-patch start（或加 --restart）。')
+      process.exit(3)
+    }
   }
   if (!isRunning(config)) {
-    info(`启动 ${config.app.name}（页面端口 ${config.debug.pagePort} / inspector ${config.debug.inspectPort}）…`)
+    if (await portAlive(config.debug.pagePort) || (config.debug.inspectPort && await portAlive(config.debug.inspectPort))) {
+      fail('调试端口已被其他进程占用。请关闭占用者或在配置中更换 pagePort / inspectPort。')
+      process.exit(4)
+    }
+    if (!opts.json) info(`启动 ${config.app.name}（页面端口 ${config.debug.pagePort} / inspector ${config.debug.inspectPort}）…`)
     const up = await launch(config)
     if (!up) { fail('等待调试端口超时：App 可能启动失败'); process.exit(4) }
     launched = true
     await sleep(1500)
   }
+
+  const pageReady = await waitFor(async () => {
+    const targets = await listTargets(config.debug.pagePort)
+    return targets.some(t => t.type === 'page' && t.webSocketDebuggerUrl)
+  }, { timeout: 20000, interval: 500 })
+  if (!pageReady) { fail('调试端口已开启，但等不到 Pen 编辑窗口。请检查 Pen 是否启动成功。'); process.exit(4) }
 
   const first = await injectTargets(config, dict)
   const menu = await patchMenu(config, dict)
@@ -175,6 +191,7 @@ function startDaemon(config, dict, opts) {
   for (const [flag, val] of [['lang', opts.lang], ['dict', opts.dict], ['config', opts.config]]) {
     if (val) args.push(`--${flag}`, String(val))
   }
+  if (opts.restart) args.push('--restart')
   if (opts.quiet) args.push('--quiet')
   const out = fs.openSync(LOG_FILE, 'a')
   const child = spawn(process.execPath, args, { detached: true, stdio: ['ignore', out, out], cwd: process.cwd() })
@@ -196,15 +213,17 @@ export async function cmdStop(args, opts) {
   const pid = readPid()
   if (pid && pidAlive(pid)) { try { process.kill(pid, 'SIGTERM'); killed = true } catch {} }
   // 兜底：按命令行特征清理孤儿守护
-  try {
-    const { execFileSync } = await import('node:child_process')
-    const out = execFileSync('pgrep', ['-f', 'zh-patch.mjs start'], { encoding: 'utf8' })
-    for (const p of out.split('\n').map(Number).filter(Boolean)) { try { process.kill(p, 'SIGTERM'); killed = true } catch {} }
-  } catch {}
+  if (process.platform !== 'win32') {
+    try {
+      const { execFileSync } = await import('node:child_process')
+      const out = execFileSync('pgrep', ['-f', 'zh-patch.mjs start'], { encoding: 'utf8' })
+      for (const p of out.split('\n').map(Number).filter(Boolean)) { try { process.kill(p, 'SIGTERM'); killed = true } catch {} }
+    } catch {}
+  }
 
   if (config && (opts.quitApp || opts.restart)) {
-    await quit(config)
-    if (opts.restart) { await sleep(1200); await launch(config, { wait: false }); }
+    if (!(await quit(config))) { fail('App 未退出；可能有未保存文件或确认对话框。请手动处理后重试。'); process.exit(3) }
+    if (opts.restart) { await sleep(1200); await launch(config, { wait: false, debug: false }); }
   }
   return output({ stopped: killed, appQuit: !!(opts.quitApp || opts.restart) }, () => {
     killed ? ok('守护已停止') : info('守护本来就没在跑')
@@ -579,6 +598,7 @@ export async function cmdPreset(args, opts) {
     const name = args[1]
     if (!name || !list.includes(name)) { fail(`没有预设 ${name}（可用：${list.join(', ')}）`); process.exit(2) }
     const preset = resolvePreset(name)
+    const presetApp = resolvePresetApp(preset)
     const dir = path.resolve(opts.dir || process.cwd())
     const lang = opts.lang || preset.lang || 'zh-CN'
     const dictRel = `dict/${preset.dict || `${name}.${lang}.json`}`
@@ -590,7 +610,7 @@ export async function cmdPreset(args, opts) {
     const target = path.join(dir, CONFIG_NAME)
     const previous = readJson(target)        // 写模板前先留一份旧的，用于保留用户自定义
     const cfg = writeConfigTemplate(target, {
-      name: preset.name, appPath: preset.app.path, processPattern: preset.app.processPattern,
+      name: preset.name, appPath: presetApp.path, processPattern: presetApp.processPattern,
       dictRel, pagePort: preset.debug.pagePort, inspectPort: preset.debug.inspectPort,
     })
     if (preset.engine) cfg.engine = { ...cfg.engine, ...preset.engine }
@@ -611,7 +631,7 @@ export async function cmdPreset(args, opts) {
     } catch {}
     return output({ preset: name, config: path.join(dir, CONFIG_NAME), dict: dictDst, entries, extraLangs }, () => {
       ok(`已套用预设 ${name}：配置 + 主语言词典 ${entries} 条${extraLangs ? `，另装入 ${extraLangs} 个语言包` : ''}`)
-      info(`   注意：预设里的 App 路径是 ${preset.app.path}，若你的安装位置不同请改配置。`)
+      info(`   App 路径：${presetApp.path}。若安装位置不同，请设置 PEN_APP_PATH 后重新套用预设。`)
     }, opts.json)
   }
   fail(`未知子命令：${sub}`)

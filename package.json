@@ -24,7 +24,7 @@
   "scripts": {
     "start": "node bin/zh-patch.mjs start",
     "doctor": "node bin/zh-patch.mjs doctor",
-    "test": "node bin/zh-patch.mjs manifest --json > /dev/null && node bin/zh-patch.mjs help > /dev/null && echo tests-ok"
+    "test": "node --test"
   },
   "keywords": [
     "pen",
